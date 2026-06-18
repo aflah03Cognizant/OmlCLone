@@ -1,0 +1,19 @@
+# egress.yaml — the recorder (runs as its own container)
+#
+# Track egress writes each track's raw stream to a file. No transcoding here, so
+# it's cheap — the transcode happens later in the FFmpeg stitch worker.
+#
+# Written for docker-compose (service names). If you run egress on the host, use
+# localhost:6379 and ws://localhost:7880 instead.
+redis:
+  address: redis:6379          # same Redis the SFU uses
+api_key: devkey                # must match a key in livekit.yaml `keys`
+api_secret: devsecret_change_me
+ws_url: ws://livekit-server:7880
+
+# Write recordings to local disk (NOT tmpfs — sequential writes don't need it).
+# This is the path INSIDE the container; docker-compose bind-mounts the host's
+# ./recordings folder here. The DirectFileOutput `filepath` the webhook sends is
+# relative to this directory. The host stitch worker maps /out/... back to
+# ./recordings/... via toHostPath() in src/lib.ts (EGRESS_OUTPUT_DIR / REC_DIR).
+local_output_directory: /out

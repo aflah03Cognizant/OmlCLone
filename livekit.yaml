@@ -1,0 +1,43 @@
+# livekit.yaml — the SFU
+#
+# This file is written for the docker-compose setup, where services reach each other
+# by their compose service name (redis, livekit-server). If you instead run
+# livekit-server directly on the host, change `redis.address` to localhost:6379 and
+# the webhook URL to http://localhost:3000/livekit/webhook.
+port: 7880
+rtc:
+  tcp_port: 7881
+  # Keep this range small AND identical to the published UDP ports in
+  # docker-compose.yml — Docker has to forward every one of them.
+  port_range_start: 50000
+  port_range_end: 50049
+  # false for local dev (advertise the local interface). On a cloud box set true so
+  # remote peers get your public IP.
+  use_external_ip: false
+  # LOCAL-DOCKER MEDIA GOTCHA: inside Docker the SFU advertises its *container* IP
+  # (172.x), which a browser on your host can't reach, so media may not flow. Fixes:
+  #   - easiest: run `livekit-server` natively on the host instead of in compose, or
+  #   - set node_ip to your host's LAN IP (then browser -> host:port -> Docker).
+  # node_ip: 192.168.1.50
+
+keys:
+  # generate real ones with: livekit-server generate-keys
+  devkey: devsecret_change_me
+
+# Close empty rooms quickly so `room_finished` fires soon after both peers leave
+# (that webhook is what ultimately triggers the stitch).
+room:
+  empty_timeout: 30          # seconds with nobody in the room before it's torn down
+  max_participants: 2        # this app is strictly 1-on-1
+
+# Egress + the SFU coordinate through Redis (same instance is fine locally).
+redis:
+  address: redis:6379        # compose service name; use localhost:6379 if host-run
+
+# LiveKit POSTs room/track/egress events here -> src/egress-webhook.ts.
+# host.docker.internal resolves to the host machine from inside the container
+# (docker-compose maps it for us via extra_hosts).
+webhook:
+  api_key: devkey
+  urls:
+    - http://host.docker.internal:3000/livekit/webhook

@@ -1,0 +1,19 @@
+# deps
+node_modules/
+web/node_modules/
+
+# build output
+dist/
+web/dist/
+
+# env & secrets
+.env
+web/.env
+
+# recordings (local media — never commit)
+recordings/
+stitched/
+
+# misc
+*.log
+.DS_Store

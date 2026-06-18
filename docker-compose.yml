@@ -1,0 +1,56 @@
+# docker-compose.yml — local infra (Redis, Postgres, LiveKit SFU, LiveKit Egress).
+#
+# The Node app + stitch worker run on the HOST (npm run dev / npm run worker) and
+# connect to these via the published ports. The React app also runs on the host
+# (npm run web:dev).
+#
+# Before first run, create the shared recording folders on the host (the egress
+# container writes into ./recordings; the host worker reads from it):
+#   mkdir -p recordings stitched
+#   # on Linux you may also need: chmod 777 recordings   (egress doesn't run as root)
+services:
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: dev
+      POSTGRES_DB: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  livekit-server:
+    image: livekit/livekit-server:latest
+    command: --config /etc/livekit.yaml
+    depends_on:
+      - redis
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml
+    ports:
+      - "7880:7880"                    # signaling (ws/http)
+      - "7881:7881"                    # ICE/TCP fallback
+      - "50000-50049:50000-50049/udp"  # WebRTC media — MUST match rtc range in livekit.yaml
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # lets the webhook reach the host app on Linux
+
+  egress:
+    image: livekit/egress:latest
+    depends_on:
+      - redis
+      - livekit-server
+    environment:
+      EGRESS_CONFIG_FILE: /etc/egress.yaml
+    volumes:
+      - ./egress.yaml:/etc/egress.yaml
+      # Host ./recordings  <->  container /out (= egress local_output_directory).
+      # The host stitch worker reads the same files via toHostPath() (/out -> ./recordings).
+      - ./recordings:/out
+    shm_size: "1gb"   # not needed for track egress, harmless if you later try composite
+
+volumes:
+  pgdata:

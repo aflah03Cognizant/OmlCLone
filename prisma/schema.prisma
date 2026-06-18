@@ -1,0 +1,115 @@
+// prisma/schema.prisma
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(uuid())
+  handle    String   @unique          // since people are known, a handle is enough
+  email     String?  @unique
+  createdAt DateTime @default(now())
+
+  // simple connection-health telemetry you can log from the client
+  lastSeenAt   DateTime?
+  lastIp       String?               // PII — fine in a closed group, prune it on cleanup
+
+  sessionsAsA  ChatSession[] @relation("UserA")
+  sessionsAsB  ChatSession[] @relation("UserB")
+  messages     Message[]
+  consents     ConsentRecord[]
+}
+
+model ChatSession {
+  id        String        @id @default(uuid())
+  roomName  String        @unique     // the LiveKit room UUID
+  status    SessionStatus @default(ACTIVE)
+
+  userAId   String
+  userBId   String
+  userA     User          @relation("UserA", fields: [userAId], references: [id])
+  userB     User          @relation("UserB", fields: [userBId], references: [id])
+
+  startedAt DateTime      @default(now())
+  endedAt   DateTime?
+
+  // the 4 raw recordings live here until stitched
+  egressTracks   EgressTrack[]
+  // final synced side-by-side output
+  stitchedPath   String?
+  stitchedAt     DateTime?
+
+  messages  Message[]
+  consents  ConsentRecord[]
+
+  @@index([status])
+  @@index([startedAt])
+}
+
+enum SessionStatus {
+  ACTIVE
+  ENDED
+  STITCHING
+  STITCHED
+  FAILED
+}
+
+model EgressTrack {
+  id         String      @id @default(uuid())
+  sessionId  String
+  session    ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  egressId   String      @unique      // LiveKit egress id
+  participant String                   // which user (identity)
+  kind       TrackKind                 // AUDIO | VIDEO
+  filePath   String?                   // set on egress_ended (authoritative path from EgressInfo)
+  startedAt  BigInt?                    // unix ms from egress metadata — used for offset
+  endedAt    DateTime?
+}
+
+enum TrackKind {
+  AUDIO
+  VIDEO
+}
+
+model Message {
+  id        String      @id @default(uuid())
+  sessionId String
+  session   ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  senderId  String
+  sender    User        @relation(fields: [senderId], references: [id])
+  body      String
+  createdAt DateTime    @default(now())
+
+  @@index([sessionId, createdAt])      // pull a transcript in order
+}
+
+// Proof of the "you are being recorded" acceptance.
+//
+// NOTE on the flow: the recording notice is accepted on the Start screen, BEFORE
+// a pair (and therefore a ChatSession) exists. So `sessionId` is optional:
+//   * sessionId = null  -> a pre-queue acceptance written by POST /api/consent.
+//                          This is the row the frontend's consent POST creates and
+//                          the matchmaker checks before it will queue a user.
+//   * sessionId = set   -> a durable per-recording proof written by the matchmaker
+//                          when the pair is matched (that's when the session exists).
+// Keeping both gives clean provenance: "user accepted vN at T" + "for session S,
+// this user had accepted vN".
+model ConsentRecord {
+  id            String       @id @default(uuid())
+  userId        String
+  user          User         @relation(fields: [userId], references: [id])
+  sessionId     String?
+  session       ChatSession? @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  noticeVersion String                  // bump when you change the wording
+  acceptedAt    DateTime     @default(now())
+
+  // For a given session a user consents once. NULL sessionIds are treated as
+  // distinct by Postgres, so repeated pre-queue acceptances are allowed (audit log).
+  @@unique([userId, sessionId])
+  @@index([userId, sessionId])
+}
